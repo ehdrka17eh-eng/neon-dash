@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>NEON DASH</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:#050714;color:#eef7ff;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:14px}
+.wrap{width:min(100%,1000px)}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 2px 10px}
+.logo{font-weight:1000;letter-spacing:.16em;font-size:clamp(20px,4vw,32px);color:#fff;text-shadow:0 0 8px #00eaff,0 0 22px #087bff}
+.logo span{color:#ff42d0;text-shadow:0 0 10px #ff42d0}
+.pill{font-size:12px;color:#9ab6d6;border:1px solid #20375b;border-radius:999px;padding:7px 11px;background:#0a1227}
+.gamebox{position:relative;border:1px solid #1c4772;border-radius:18px;overflow:hidden;box-shadow:0 0 0 1px #07172d,0 0 35px #006dff33,0 18px 60px #0009;background:#050a1b}
+canvas{display:block;width:100%;height:auto;aspect-ratio:16/9;touch-action:none}
+.hud{position:absolute;left:14px;right:14px;top:12px;display:flex;justify-content:space-between;pointer-events:none;font-size:12px;font-weight:800;letter-spacing:.08em;text-shadow:0 2px 6px #000}
+.hud .right{text-align:right}
+.track{height:5px;background:#14233d}
+.track i{display:block;height:100%;width:0;background:linear-gradient(90deg,#00eaff,#ff36c7);box-shadow:0 0 12px #00eaff}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#050817cc,#07142acc);backdrop-filter:blur(5px);text-align:center;padding:20px}
+.panel{max-width:480px}
+.panel h1{font-size:clamp(30px,7vw,58px);margin:0 0 6px;font-weight:1000;letter-spacing:.08em;color:white;text-shadow:0 0 12px #00d9ff,0 0 32px #245cff}
+.panel p{color:#b7cce7;line-height:1.65;margin:8px 0 18px}
+button{border:0;border-radius:999px;padding:12px 25px;font-weight:900;font-size:15px;color:#06101f;background:linear-gradient(100deg,#35f2ff,#ff4bd2);box-shadow:0 0 22px #00d9ff55;cursor:pointer}
+.small{font-size:11px;color:#86a3c7;margin-top:14px}
+.bottom{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:10px 3px;color:#91a9c8;font-size:12px}
+.key{display:inline-block;border:1px solid #355174;border-bottom-width:3px;border-radius:5px;padding:2px 6px;color:#dffaff;margin:0 2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><div class="logo">NEON <span>DASH</span></div><div class="pill">REMASTERED · BUILD 2.0</div></div>
+  <div class="gamebox">
+    <canvas id="game" width="960" height="540"></canvas>
+    <div class="hud"><div><div id="mode">CUBE MODE</div><div id="time">00:00</div></div><div class="right"><div id="progress">0%</div><div id="status">READY</div></div></div>
+    <div class="track"><i id="bar"></i></div>
+    <div class="overlay" id="overlay"><div class="panel"><h1 id="title">NEON DASH</h1><p id="message">세 가지 모드를 돌파하고 결승점에 도착해 봐!<br>큐브 15초 → 웨이브 → 비행선</p><button id="start">게임 시작</button><div class="small">PC: SPACE / 마우스 · 모바일: 화면 터치</div></div></div>
+  </div>
+  <div class="bottom"><div>큐브: 누르면 점프 <span class="key">SPACE</span> · 웨이브/비행선: 누르고 있으면 상승</div><div>바닥·천장 접촉은 웨이브에서 안전</div></div>
+</div>
+<script>
+(() => {
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const W=960,H=540,ground=438,ceiling=92;
+const overlay=document.getElementById('overlay'),startBtn=document.getElementById('start');
+const modeEl=document.getElementById('mode'),timeEl=document.getElementById('time'),progressEl=document.getElementById('progress'),statusEl=document.getElementById('status'),bar=document.getElementById('bar');
+const total=65, stage1=15, stage2=40;
+let running=false,dead=false,won=false,elapsed=0,last=0,held=false,pressQueued=false,player,particles=[],stars=[];
+let best=0;
+for(let i=0;i<90;i++)stars.push({x:Math.random()*W,y:Math.random()*H*.78,r:Math.random()*1.7+.3,a:Math.random()*.6+.2});
+const stages=[
+ {name:'CUBE MODE',color:'#23eaff'},
+ {name:'WAVE MODE',color:'#ff43d1'},
+ {name:'SHIP MODE',color:'#a4ff4a'}
+];
+function stage(){return elapsed<stage1?0:elapsed<stage2?1:2}
+function stageTime(){return stage()===0?stage1:stage()===1?stage2:total}
+function reset(){elapsed=0;dead=false;won=false;held=false;pressQueued=false;particles=[];player={x:190,y:ground-34,vy:0,size:34,rot:0};}
+function start(){reset();running=true;overlay.style.display='none';last=performance.now();requestAnimationFrame(loop)}
+function finish(win){running=false;won=win;overlay.style.display='flex';document.getElementById('title').textContent=win?'LEVEL COMPLETE!':'CRASH!';document.getElementById('message').innerHTML=win?'완벽한 클리어! 네온 대쉬 정복 성공!':'괜찮아! 다시 도전하면 돼.<br>점프 타이밍과 비행 조작을 연습해 봐.';startBtn.textContent=win?'다시 플레이':'재도전';}
+startBtn.addEventListener('click',start);
+function down(e){if(e)e.preventDefault();if(!held){pressQueued=true;}held=true;}
+function up(e){if(e)e.preventDefault();held=false;}
+canvas.addEventListener('pointerdown',down);window.addEventListener('pointerup',up);
+window.addEventListener('keydown',e=>{if(['Space','ArrowUp','KeyW'].includes(e.code)){if(!e.repeat)down(e);}});
+window.addEventListener('keyup',e=>{if(['Space','ArrowUp','KeyW'].includes(e.code))up(e);});
+function obstacleList(t){
+ const out=[];
+ // positions are generated deterministically in world-time so the game stays consistent
+ if(t<15){
+   for(let k=0;k<10;k++){let at=2.0+k*1.28;if(at<15)out.push({t:at,type:k%4===3?'double':'spike',x:at*300+600});}
+   out.push({t:8.3,type:'block',x:8.3*300+600});
+ }else if(t<40){
+   for(let k=0;k<18;k++){let at=16.1+k*1.22;out.push({t:at,type:k%3===0?'gate':'waveSpike',x:(at-15)*300+600});}
+ }else{
+   for(let k=0;k<16;k++){let at=41.3+k*1.42;out.push({t:at,type:k%3===0?'shipGate':'orb',x:(at-40)*300+600});}
+ }
+ return out;
+}
+function worldX(o){return o.x-(elapsed-(o.t<15?0:o.t<40?15:40))*300+190}
+function drawBg(dt){
+ let s=stage(),c=stages[s].color;
+ let g=ctx.createLinearGradient(0,0,W,H);g.addColorStop(0,'#07152e');g.addColorStop(.55,'#090d25');g.addColorStop(1,'#180b2c');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ ctx.save();for(let st of stars){st.x-=dt*(12+st.r*8);if(st.x<0)st.x=W;ctx.globalAlpha=st.a;ctx.fillStyle='#bdeaff';ctx.beginPath();ctx.arc(st.x,st.y,st.r,0,Math.PI*2);ctx.fill();}ctx.restore();
+ ctx.save();ctx.strokeStyle=c;ctx.globalAlpha=.13;ctx.lineWidth=1;
+ for(let x=0;x<W;x+=48){ctx.beginPath();ctx.moveTo(x,ceiling);ctx.lineTo(x,H);ctx.stroke()}
+ for(let y=ceiling;y<H;y+=38){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+ ctx.globalAlpha=.18;ctx.lineWidth=3;ctx.shadowColor=c;ctx.shadowBlur=16;ctx.beginPath();ctx.moveTo(0,ground);ctx.lineTo(W,ground);ctx.stroke();
+ ctx.beginPath();ctx.moveTo(0,ceiling);ctx.lineTo(W,ceiling);ctx.stroke();ctx.restore();
+ // distant neon skyline
+ ctx.save();ctx.globalAlpha=.22;ctx.fillStyle='#142d58';
+ for(let i=0;i<18;i++){let x=i*62-((elapsed*25)%62),h=50+(i*37%100);ctx.fillRect(x,ground-h,38,h);}
+ ctx.restore();
+}
+function drawSpike(x,y,size=38,flip=false,color='#ff4dca'){
+ ctx.save();ctx.shadowColor=color;ctx.shadowBlur=16;ctx.fillStyle=color;ctx.beginPath();
+ if(!flip){ctx.moveTo(x-size/2,y);ctx.lineTo(x,y-size);ctx.lineTo(x+size/2,y)}else{ctx.moveTo(x-size/2,y);ctx.lineTo(x,y+size);ctx.lineTo(x+size/2,y)}
+ ctx.closePath();ctx.fill();ctx.restore();
+}
+function drawObstacles(){
+ const s=stage();
+ if(s===0){
+  for(let k=0;k<10;k++){let at=2+k*1.28,x=W-(elapsed-at)*300;if(x>-60&&x<W+60){drawSpike(x,ground,38,false,'#ff4dca');if(k%4===3)drawSpike(x+38,ground,38,false,'#ff4dca');}}
+  let bx=W-(elapsed-8.3)*300;if(bx>-60&&bx<W+60){ctx.save();ctx.shadowColor='#23eaff';ctx.shadowBlur=18;ctx.fillStyle='#116c9b';ctx.fillRect(bx-20,ground-52,40,52);ctx.strokeStyle='#67f4ff';ctx.strokeRect(bx-20,ground-52,40,52);ctx.restore();}
+ }else if(s===1){
+  for(let k=0;k<18;k++){let at=16.1+k*1.22,x=W-(elapsed-at)*300;if(x>-80&&x<W+80){let gapY=190+(k*61%155);drawSpike(x,0,38,true,'#ff43d1');drawSpike(x,H,38,false,'#ff43d1');ctx.fillStyle='#35104a';ctx.fillRect(x-13,ceiling,26,gapY-65);ctx.fillRect(x-13,gapY+85,26,ground-gapY-85);ctx.strokeStyle='#ff8be4';ctx.strokeRect(x-13,ceiling,26,gapY-65);ctx.strokeRect(x-13,gapY+85,26,ground-gapY-85);}}
+ }else{
+  for(let k=0;k<16;k++){let at=41.3+k*1.42,x=W-(elapsed-at)*300;if(x>-80&&x<W+80){let gapY=190+(k*47%160);ctx.save();ctx.shadowColor='#a4ff4a';ctx.shadowBlur=18;ctx.fillStyle='#386b27';ctx.fillRect(x-16,ceiling,32,gapY-68);ctx.fillRect(x-16,gapY+72,32,ground-gapY-72);ctx.strokeStyle='#c8ff85';ctx.strokeRect(x-16,ceiling,32,gapY-68);ctx.strokeRect(x-16,gapY+72,32,ground-gapY-72);ctx.restore();}}
+ }
+}
+function burst(x,y,color){for(let i=0;i<14;i++)particles.push({x,y,vx:(Math.random()-.5)*250,vy:(Math.random()-.5)*250,life:.5,color});}
+function update(dt){
+ elapsed+=dt;if(elapsed>=total){elapsed=total;finish(true);return}
+ const s=stage(),p=player;
+ if(s===0){
+  if(pressQueued&&p.y>=ground-p.size-1){p.vy=-660;burst(p.x,p.y+p.size/2,'#23eaff');}
+  p.vy+=1750*dt;p.y+=p.vy*dt;if(p.y>ground-p.size){p.y=ground-p.size;p.vy=0;}
+  p.rot+=dt*5;
+  // spike collision checks
+  for(let k=0;k<10;k++){let at=2+k*1.28,x=W-(elapsed-at)*300;if(Math.abs(x-p.x)<27&&p.y+p.size>ground-34){finish(false);return}}
+  let bx=W-(elapsed-8.3)*300;if(Math.abs(bx-p.x)<32&&p.y+p.size>ground-52){finish(false);return}
+ }else if(s===1){
+  const dir=held?-1:1;p.vy=dir*430;p.y+=p.vy*dt;p.y=Math.max(ceiling+8,Math.min(ground-p.size-8,p.y));p.rot=Math.atan2(p.vy,420);
+  for(let k=0;k<18;k++){let at=16.1+k*1.22,x=W-(elapsed-at)*300,gapY=190+(k*61%155);if(Math.abs(x-p.x)<24&&(p.y<gapY-60||p.y+p.size>gapY+78)){finish(false);return}}
+ }else{
+  const target=held?-300:300;p.vy+=(target-p.vy)*Math.min(1,dt*2.6);p.y+=p.vy*dt;p.y=Math.max(ceiling+10,Math.min(ground-p.size-10,p.y));p.rot=p.vy/1000;
+  for(let k=0;k<16;k++){let at=41.3+k*1.42,x=W-(elapsed-at)*300,gapY=190+(k*47%160);if(Math.abs(x-p.x)<25&&(p.y<gapY-63||p.y+p.size>gapY+67)){finish(false);return}}
+ }
+ pressQueued=false;
+ for(let q of particles){q.x+=q.vx*dt;q.y+=q.vy*dt;q.life-=dt;}particles=particles.filter(q=>q.life>0);
+}
+function drawPlayer(){
+ let p=player,s=stage(),color=stages[s].color;ctx.save();ctx.translate(p.x+p.size/2,p.y+p.size/2);ctx.rotate(s===0?p.rot:p.rot*.45);ctx.shadowColor=color;ctx.shadowBlur=24;
+ if(s===0){let grad=ctx.createLinearGradient(-17,-17,17,17);grad.addColorStop(0,'#e9ffff');grad.addColorStop(.45,'#22dfff');grad.addColorStop(1,'#2366ff');ctx.fillStyle=grad;ctx.fillRect(-17,-17,34,34);ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(-17,-17,34,34);ctx.fillStyle='#07132b';ctx.fillRect(-9,-6,5,5);ctx.fillRect(5,-6,5,5);}
+ else if(s===1){ctx.fillStyle='#ff4bd5';ctx.beginPath();ctx.moveTo(-18,-15);ctx.lineTo(18,0);ctx.lineTo(-18,15);ctx.closePath();ctx.fill();ctx.strokeStyle='#fff';ctx.stroke();}
+ else{ctx.fillStyle='#a4ff4a';ctx.beginPath();ctx.moveTo(-18,-12);ctx.lineTo(10,-12);ctx.lineTo(20,0);ctx.lineTo(10,12);ctx.lineTo(-18,12);ctx.closePath();ctx.fill();ctx.strokeStyle='#fff';ctx.stroke();}
+ ctx.restore();
+}
+function draw(){
+ let dt=0;drawBg(dt);drawObstacles();
+ ctx.save();for(let q of particles){ctx.globalAlpha=Math.max(0,q.life*2);ctx.fillStyle=q.color;ctx.shadowColor=q.color;ctx.shadowBlur=12;ctx.fillRect(q.x,q.y,4,4);}ctx.restore();
+ if(player)drawPlayer();
+ // mode transition flash line
+ const s=stage();ctx.save();ctx.globalAlpha=.65;ctx.fillStyle=stages[s].color;ctx.font='900 13px system-ui';ctx.fillText(s===0?'01  /  CUBE':s===1?'02  /  WAVE':'03  /  SHIP',W-150,H-24);ctx.restore();
+}
+function loop(now){if(!running)return;let dt=Math.min((now-last)/1000,.032);last=now;update(dt);draw();let s=stage();modeEl.textContent=stages[s].name;timeEl.textContent='00:'+String(Math.floor(elapsed)).padStart(2,'0');let pct=Math.floor(elapsed/total*100);progressEl.textContent=pct+'%';bar.style.width=pct+'%';statusEl.textContent=s===0?'JUMP':s===1?'HOLD / RELEASE':'FLY';if(running)requestAnimationFrame(loop);}
+reset();draw();
+})();
+</script>
+</body>
+</html>
